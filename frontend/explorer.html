@@ -1,87 +1,170 @@
-/**
- * Depth-profile, model-vs-observation and difference charts.
- * Chart.js throughout, so the whole visual layer stays in one library.
- */
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SagarDrishti · Explorer</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="[cdn.jsdelivr.net](https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js)"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">SagarDrishti</div>
+    <nav>
+      <button data-view="explore" class="active">Explore</button>
+      <button data-view="compare">Compare</button>
+      <button data-view="analysis">Analysis</button>
+      <button data-view="about">About</button>
+    </nav>
+    <span id="status-pill" class="pill">Ready</span>
+  </header>
 
-export class ProfileCharts {
-  constructor(canvasId) {
-    this.ctx = document.getElementById(canvasId).getContext("2d");
-    this.chart = null;
-  }
+  <main class="layout">
+    <!-- LEFT: controls -->
+    <aside class="panel controls">
+      <section>
+        <h3>Location</h3>
+        <select id="basin">
+          <option value="bay_of_bengal">Bay of Bengal</option>
+          <option value="arabian_sea">Arabian Sea</option>
+          <option value="equatorial_indian">Equatorial Indian Ocean</option>
+        </select>
+        <div class="bbox">
+          <label>Min lat <input id="min-lat" type="number" value="5" /></label>
+          <label>Max lat <input id="max-lat" type="number" value="15" /></label>
+          <label>Min lon <input id="min-lon" type="number" value="80" /></label>
+          <label>Max lon <input id="max-lon" type="number" value="90" /></label>
+        </div>
+      </section>
 
-  renderProfile({ modelProfile, observationProfile, variable, unit }) {
-    if (this.chart) this.chart.destroy();
+      <section>
+        <h3>Model</h3>
+        <select id="dataset">
+          <option value="hycom">HYCOM</option>
+          <option value="copernicus">Copernicus Marine</option>
+        </select>
+        <select id="variable">
+          <option value="temperature">Temperature</option>
+          <option value="salinity">Salinity</option>
+          <option value="chlorophyll">Chlorophyll</option>
+        </select>
+      </section>
 
-    this.chart = new Chart(this.ctx, {
-      type: "line",
-      data: {
-        datasets: [
-          {
-            label: "Model (derived)",
-            data: modelProfile,
-            borderColor: "#f59e0b",
-            backgroundColor: "rgba(245,158,11,0.12)",
-            parsing: { xAxisKey: "value", yAxisKey: "depth" },
-            tension: 0.2,
-          },
-          {
-            label: "Observation (measured)",
-            data: observationProfile,
-            borderColor: "#22d3ee",
-            backgroundColor: "rgba(34,211,238,0.15)",
-            parsing: { xAxisKey: "value", yAxisKey: "depth" },
-            pointRadius: 3,
-            tension: 0.2,
-          },
-        ],
-      },
-      options: {
-        indexAxis: "y",                 // depth on the vertical axis
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          y: {
-            reverse: true,
-            title: { display: true, text: "Depth (m)" },
-          },
-          x: { title: { display: true, text: `${variable} (${unit})` } },
+      <section>
+        <h3>Depth</h3>
+        <input id="depth" type="range" min="0" max="1000" value="50" />
+        <output id="depth-out">50 m</output>
+      </section>
+
+      <section>
+        <h3>Visualization</h3>
+        <label>Vertical exaggeration <input id="vex" type="range" min="1" max="10" value="1" /></label>
+        <label>Opacity <input id="opacity" type="range" min="10" max="100" value="85" /></label>
+      </section>
+
+      <section>
+        <h3>State</h3>
+        <div class="toggle">
+          <button id="view-raw" class="active">View A · Raw</button>
+          <button id="view-assim">View B · Assimilated</button>
+        </div>
+      </section>
+
+      <button id="fetch" class="primary">Fetch data</button>
+    </aside>
+
+    <!-- CENTER: 3D -->
+    <section id="viewport" class="viewport"></section>
+
+    <!-- RIGHT: profile + comparison -->
+    <aside class="panel profile">
+      <h3>Model vs Observation</h3>
+      <div class="chart-wrap"><canvas id="profile-chart"></canvas></div>
+
+      <h3>Difference</h3>
+      <div class="chart-wrap"><canvas id="diff-chart"></canvas></div>
+
+      <h3>Matching metadata</h3>
+      <dl id="matching-meta">
+        <dt>Time offset</dt><dd id="m-time">—</dd>
+        <dt>Spatial distance</dt><dd id="m-dist">—</dd>
+        <dt>Interpolation</dt><dd id="m-interp">—</dd>
+        <dt>Observation quality</dt><dd id="m-quality">—</dd>
+      </dl>
+
+      <h3>Provenance</h3>
+      <dl id="provenance">
+        <dt>Source</dt><dd id="p-source">—</dd>
+        <dt>Dataset</dt><dd id="p-dataset">—</dd>
+        <dt>Retrieved</dt><dd id="p-time">—</dd>
+      </dl>
+    </aside>
+  </main>
+
+  <script type="module">
+    import { OceanViewer } from "./js/viewer3d.js";
+    import { ProfileCharts } from "./js/charts.js";
+    import * as api from "./js/api.js";
+
+    const viewer = new OceanViewer(document.getElementById("viewport"));
+    const charts = new ProfileCharts("profile-chart");
+
+    const $ = (id) => document.getElementById(id);
+
+    function readControls() {
+      return {
+        basin: $("basin").value,
+        dataset: $("dataset").value,
+        variable: $("variable").value,
+        depth: Number($("depth").value),
+        bbox: {
+          minLat: Number($("min-lat").value),
+          maxLat: Number($("max-lat").value),
+          minLon: Number($("min-lon").value),
+          maxLon: Number($("max-lon").value),
         },
-        plugins: {
-          legend: { labels: { color: "#cbd5e1" } },
-          tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.parsed.x}` } },
-        },
-      },
+      };
+    }
+
+    $("depth").addEventListener("input", (e) => {
+      $("depth-out").textContent = `${e.target.value} m`;
     });
-  }
 
-  renderDifference(matchedPairs, unit) {
-    if (this.chart) this.chart.destroy();
+    $("vex").addEventListener("input", (e) => viewer.setVerticalExaggeration(Number(e.target.value)));
+    $("opacity").addEventListener("input", (e) => viewer.setOpacity(Number(e.target.value) / 100));
 
-    this.chart = new Chart(this.ctx, {
-      type: "bar",
-      data: {
-        labels: matchedPairs.map((p) => `${p.depth} m`),
-        datasets: [{
-          label: `Model − Observation (${unit})`,
-          data: matchedPairs.map((p) => p.difference),
-          backgroundColor: matchedPairs.map((p) =>
-            p.difference >= 0 ? "rgba(239,68,68,0.75)" : "rgba(59,130,246,0.75)"
-          ),
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          y: {
-            // Diverging scale centred on zero, so sign reads at a glance.
-            suggestedMin: -Math.max(...matchedPairs.map((p) => Math.abs(p.difference))),
-            suggestedMax: Math.max(...matchedPairs.map((p) => Math.abs(p.difference))),
-            grid: { color: (c) => (c.tick.value === 0 ? "#94a3b8" : "rgba(148,163,184,0.15)") },
-            title: { display: true, text: "Model − Observation" },
-          },
-        },
-      },
+    $("view-raw").addEventListener("click", () => {
+      viewer.setView("raw");
+      $("view-raw").classList.add("active");
+      $("view-assim").classList.remove("active");
     });
-  }
-}
+    $("view-assim").addEventListener("click", () => {
+      viewer.setView("assimilated");
+      $("view-assim").classList.add("active");
+      $("view-raw").classList.remove("active");
+    });
+
+    $("fetch").addEventListener("click", async () => {
+      const c = readControls();
+      $("status-pill").textContent = "Loading…";
+      try {
+        const [field, floats] = await Promise.all([
+          api.fetchModelField(c),
+          api.fetchFloats({ basin: c.basin }),
+        ]);
+        viewer.renderField(field);
+        viewer.renderMarkers(floats.floats);
+
+        $("p-source").textContent = field.provenance?.source ?? "—";
+        $("p-time").textContent = field.provenance?.retrieval_time ?? "—";
+        $("m-interp").textContent = field.method ?? "—";
+
+        $("status-pill").textContent = floats.cached ? "Loaded (cached)" : "Loaded";
+      } catch (err) {
+        $("status-pill").textContent = `Error: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
+
