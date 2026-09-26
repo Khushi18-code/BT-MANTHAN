@@ -1,0 +1,1 @@
+Render deployment config: service type web, build command pip install -r requirements.txt, start command gunicorn backend.Server:app
