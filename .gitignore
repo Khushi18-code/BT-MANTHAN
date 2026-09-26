@@ -1,0 +1,1 @@
+__pycache__/, *.pyc, .env, venv/, *.nc , *.csv, node_modules/, .DS_Store.
