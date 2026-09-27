@@ -1,1 +1,33 @@
-__pycache__/, *.pyc, .env, venv/, *.nc , *.csv, node_modules/, .DS_Store.
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large scientific datasets
+*.nc
+*.nc4
+*.h5
+*.grib
+*.grib2
+*.zarr
+
+# Temporary files
+*.tmp
+*.temp
