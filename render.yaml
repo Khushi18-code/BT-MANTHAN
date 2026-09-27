@@ -1,1 +1,9 @@
-Render deployment config: service type web, build command pip install -r requirements.txt, start command gunicorn backend.Server:app
+services:
+  - type: web
+    name: sagar-drishti
+    runtime: python
+    plan: free
+
+    buildCommand: pip install -r requirements.txt
+
+    startCommand: gunicorn Server:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
