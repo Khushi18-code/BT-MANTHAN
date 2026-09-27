@@ -13,7 +13,21 @@ flowchart TD
     G --> H[Index & cache]
     H --> I[Expose through API]
 ```
+## Two-Step Sequential Fetch
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as Backend
+    participant E as INCOIS ERDDAP
+    participant C as Copernicus Marine
 
+    U->>S: POST /api/fetch-live-data (box, dates, depth)
+    S->>E: Argo query for box/time window
+    E-->>S: Float cycles + TEMP/PSAL profiles
+    S->>C: Subset model at each cycle's lat/lon/time
+    C-->>S: Model values at exact Argo positions
+    S-->>U: argo_data.json + copernicus_model.json
+```
 ## What Normalization Means Here
 
 Normalization converts different source structures into **one common internal representation**. It
