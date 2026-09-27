@@ -83,7 +83,7 @@ Full explanation: [docs/03-architecture.md](./docs/03-architecture.md)
 
 ## Repository Layout
 
-\`\`\`
+```
 backend/
   Server.py               Application server & API routes
   copernicus_model.py     Copernicus Marine model data extraction
@@ -97,16 +97,16 @@ frontend/
 docs/
   Problem, solution, architecture, pipeline, scientific method,
   DQI framework, project phases, and flowcharts
-\`\`\`
+```
 
 ## Running Locally
 
-\`\`\`bash
+```bash
 git clone [github.com](https://github.com/harshitjsdev/Sagar-Drishti.git)
 cd Sagar-Drishti
 pip install -r requirements.txt
 python backend/Server.py
-\`\`\`
+```
 
 Open \`frontend/index.html\` — or the server root — in a browser.
 
