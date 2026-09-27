@@ -78,35 +78,28 @@ Full explanation: [docs/03-architecture.md](./docs/03-architecture.md)
 | Frontend | Vanilla JavaScript (no framework), HTML5, CSS3 |
 | 3D rendering | Three.js, WebGL |
 | Charts | Chart.js |
-| Deployment | Render (`render.yaml`) |
+| Deployment | Railway |
 | Data formats | NetCDF, JSON, CSV, delimited text |
 
 ## Repository Layout
 
-```
-backend/
-  Server.py               Application server & API routes
-  copernicus_model.py     Copernicus Marine model data extraction
-  Fetch_incois_argo.py    Argo float observation retrieval
-  parse_nc.py             NetCDF parser and subsetting utilities
+| Folder | File | Purpose |
+|---|---|---|
+| `backend/` | `Server.py` | Application server & API routes |
+| `backend/` | `copernicus_model.py` | Copernicus Marine model data extraction |
+| `backend/` | `Fetch_incois_argo.py` | Argo float observation retrieval |
+| `backend/` | `parse_nc.py` | NetCDF parser and subsetting utilities |
+| `frontend/` | `index.html` | Landing page |
+| `frontend/` | `explorer.html` | 3D explorer, comparison & analysis interface |
+| `docs/` | — | Problem, solution, architecture, pipeline, scientific method, DQI, phases, flowcharts |
 
-frontend/
-  index.html              Landing page
-  explorer.html           3D explorer, comparison & analysis interface
-
-docs/
-  Problem, solution, architecture, pipeline, scientific method,
-  DQI framework, project phases, and flowcharts
-```
 
 ## Running Locally
 
-```bash
-git clone [github.com](https://github.com/harshitjsdev/Sagar-Drishti.git)
-cd Sagar-Drishti
+git clone [github.com](https://github.com/Khushi18-code/BT-MANTHAN.git)
+cd BT-MANTHAN
 pip install -r requirements.txt
 python backend/Server.py
-```
 
 Open \`frontend/index.html\` — or the server root — in a browser.
 
