@@ -1,168 +1,744 @@
 """
-NetCDF ingestion via xarray.
+Parse Copernicus / HYCOM NetCDF data using xarray.
 
-Opens a NetCDF dataset, identifies dimensions and variables, subsets by
-region/depth/time, normalizes into the common schema, and runs quality
-checks. Never loads a full dataset into memory.
+Input:
+    data/copernicus/temperature.nc
+
+Output:
+    data/copernicus/parsed_temperature.csv
+    data/copernicus/parsed_temperature.json
+
+The script:
+1. Opens the NetCDF file with xarray
+2. Detects latitude/longitude/depth/time coordinates
+3. Detects the ocean variable (thetao by default)
+4. Prints dataset information
+5. Selects a geographic/depth/time subset
+6. Converts the selected xarray data to normal Python records
+7. Saves CSV and JSON for further processing/frontend use
 """
 
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import xarray as xr
-from typing import Optional, Dict, Any, List
-from datetime import datetime, timezone
-
-from schema import (
-    ModelRecord, Provenance, Quality,
-    CANONICAL_UNITS, PLAUSIBLE_RANGES,
-)
-
-# Maps source variable names onto canonical names across HYCOM / Copernicus.
-VARIABLE_ALIASES = {
-    "water_temp": "temperature", "temp": "temperature", "thetao": "temperature",
-    "TEMP": "temperature",
-    "salinity": "salinity", "sal": "salinity", "so": "salinity", "SALINITY": "salinity",
-    "chl": "chlorophyll", "CHL": "chlorophyll",
-    "uo": "u_current", "water_u": "u_current",
-    "vo": "v_current", "water_v": "v_current",
-}
-
-DEPTH_ALIASES = ["depth", "deptht", "lev", "level", "z"]
-LAT_ALIASES = ["lat", "latitude", "nav_lat"]
-LON_ALIASES = ["lon", "longitude", "nav_lon"]
 
 
-def _find_coord(ds: xr.Dataset, candidates: List[str]) -> Optional[str]:
-    """Return the first coordinate name present in the dataset."""
-    for name in candidates:
-        if name in ds.coords or name in ds.variables:
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+INPUT_FILE = Path("data/copernicus/temperature_subset.nc.2icw2ds0")
+
+CSV_OUTPUT = Path("data/copernicus/parsed_temperature.csv")
+JSON_OUTPUT = Path("data/copernicus/parsed_temperature.json")
+
+# Geographic region
+MIN_LON = 45
+MAX_LON = 105
+
+MIN_LAT = -5
+MAX_LAT = 22
+
+# Depth range in meters
+MIN_DEPTH = 0
+MAX_DEPTH = 1000
+
+# Maximum number of points written to JSON/CSV.
+# This prevents accidentally creating a huge file.
+MAX_POINTS = 50000
+
+# Variable to extract
+VARIABLE = "thetao"
+
+
+# ============================================================
+# OPEN NETCDF FILE
+# ============================================================
+
+def open_netcdf(file_path: Path) -> xr.Dataset:
+
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"NetCDF file not found:\n{file_path.resolve()}"
+        )
+
+    print("\nOpening NetCDF file...")
+    print(f"File: {file_path.resolve()}")
+
+    try:
+        # Normal method
+        ds = xr.open_dataset(
+            file_path,
+            decode_times=True
+        )
+
+    except Exception as error:
+        print("\nNormal time decoding failed.")
+        print(f"Reason: {error}")
+        print("\nTrying again with decode_times=False...")
+
+        # Fallback for unusual time units such as
+        # "hours since analysis"
+        ds = xr.open_dataset(
+            file_path,
+            decode_times=False
+        )
+
+    return ds
+
+
+# ============================================================
+# FIND COORDINATE NAMES
+# ============================================================
+
+def find_coordinate(ds: xr.Dataset, possible_names: list[str]) -> str | None:
+
+    all_names = list(ds.coords) + list(ds.dims)
+
+    # Exact match first
+    for name in possible_names:
+        if name in all_names:
             return name
+
+    # Case-insensitive match
+    lower_names = {
+        name.lower(): name
+        for name in all_names
+    }
+
+    for name in possible_names:
+        if name.lower() in lower_names:
+            return lower_names[name.lower()]
+
     return None
 
 
-def open_dataset(path: str) -> xr.Dataset:
-    """Open lazily — no data is read until a slice is requested."""
-    return xr.open_dataset(path, chunks={})
+# ============================================================
+# FIND OCEAN VARIABLE
+# ============================================================
 
+def find_variable(ds: xr.Dataset, requested: str) -> str:
 
-def identify_variables(ds: xr.Dataset) -> Dict[str, str]:
-    """Map canonical variable names present in this dataset to source names."""
-    found = {}
-    for source_name in ds.data_vars:
-        canonical = VARIABLE_ALIASES.get(source_name, VARIABLE_ALIASES.get(source_name.lower()))
-        if canonical:
-            found[canonical] = source_name
-    return found
+    if requested in ds.data_vars:
+        return requested
 
+    # Common ocean variables
+    candidates = [
+        "thetao",
+        "temperature",
+        "temp",
+        "so",
+        "salinity",
+        "uo",
+        "vo"
+    ]
 
-def run_quality_checks(record: ModelRecord) -> Quality:
-    """
-    Structural checks only. A QC failure never implies the value is wrong —
-    only that the record is not usable for comparison.
-    """
-    q = Quality()
+    for variable in candidates:
+        if variable in ds.data_vars:
+            print(
+                f"\nRequested variable '{requested}' was not found."
+            )
+            print(
+                f"Using available variable: '{variable}'"
+            )
+            return variable
 
-    if record.latitude is None or record.longitude is None:
-        q.reject("missing_coordinates")
-    elif not (-90 <= record.latitude <= 90) or not (-180 <= record.longitude <= 180):
-        q.reject("invalid_coordinates")
+    if len(ds.data_vars) == 0:
+        raise ValueError("No data variables were found in the NetCDF file.")
 
-    if record.timestamp is None:
-        q.reject("missing_timestamp")
-    else:
-        try:
-            datetime.fromisoformat(record.timestamp.replace("Z", "+00:00"))
-        except ValueError:
-            q.reject("unparseable_timestamp")
+    # Last resort
+    first_variable = list(ds.data_vars)[0]
 
-    if record.depth is None or record.depth < 0:
-        q.reject("invalid_depth")
-
-    if record.value is None or np.isnan(record.value):
-        q.reject("missing_value")
-
-    rng = PLAUSIBLE_RANGES.get(record.unit)
-    if rng and record.value is not None and not np.isnan(record.value):
-        lo, hi = rng
-        if not (lo <= record.value <= hi):
-            q.flag(f"outside_plausible_range:{record.value}")
-
-    return q
-
-
-def subset_field(
-    path: str,
-    variable: str,
-    bbox: Dict[str, float],
-    depth: float,
-    time_range: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
-    """
-    Extract a web-ready slice. This is the function the API calls.
-
-    bbox = {"min_lat":, "max_lat":, "min_lon":, "max_lon":}
-    Returns JSON-serializable dict, never an xarray object.
-    """
-    ds = open_dataset(path)
-    available = identify_variables(ds)
-
-    if variable not in available:
-        raise ValueError(f"variable '{variable}' not present in dataset")
-
-    source_var = available[variable]
-    lat_name = _find_coord(ds, LAT_ALIASES)
-    lon_name = _find_coord(ds, LON_ALIASES)
-    depth_name = _find_coord(ds, DEPTH_ALIASES)
-
-    da = ds[source_var]
-
-    # Spatial subset
-    da = da.sel({
-        lat_name: slice(bbox["min_lat"], bbox["max_lat"]),
-        lon_name: slice(bbox["min_lon"], bbox["max_lon"]),
-    })
-
-    # Vertical: exact level if available, otherwise interpolate
-    method = "grid_point"
-    source_levels = [float(depth)]
-    if depth_name and depth_name in da.dims:
-        levels = np.asarray(ds[depth_name].values, dtype=float)
-        if np.any(np.isclose(levels, depth)):
-            da = da.sel({depth_name: float(levels[np.argmin(np.abs(levels - depth))])})
-        else:
-            da = da.interp({depth_name: depth})
-            method = "vertical_interpolation"
-        source_levels = levels.tolist()
-
-    # Temporal
-    time_name = "time" if "time" in da.dims else None
-    if time_name and time_range:
-        da = da.sel({time_name: slice(time_range["start"], time_range["end"])})
-
-    da = da.load()  # materialize only the subset
-
-    lats = np.asarray(ds[lat_name].values, dtype=float).tolist()
-    lons = np.asarray(ds[lon_name].values, dtype=float).tolist()
-
-    prov = Provenance(
-        source="HYCOM" if "hycom" in path.lower() else "Copernicus Marine",
-        dataset=path,
-        retrieval_time=datetime.now(timezone.utc).isoformat(),
+    print(
+        f"\nUsing first available data variable: "
+        f"'{first_variable}'"
     )
-    if method != "grid_point":
-        prov.add_processing(method)
 
-    return {
-        "variable": variable,
-        "unit": CANONICAL_UNITS.get(variable, "unknown"),
-        "depth": depth,
-        "method": method,
-        "latitude": lats,
-        "longitude": lons,
-        "values": np.nan_to_num(da.values, nan=-999.0).tolist(),
-        "timestamps": (
-            [str(t) for t in np.asarray(ds[time_name].values).astype("datetime64[s]").tolist()]
-            if time_name else []
+    return first_variable
+
+
+# ============================================================
+# PRINT DATASET INFORMATION
+# ============================================================
+
+def print_dataset_info(ds: xr.Dataset):
+
+    print("\n" + "=" * 70)
+    print("NETCDF DATASET INFORMATION")
+    print("=" * 70)
+
+    print("\nDimensions:")
+    for name, size in ds.sizes.items():
+        print(f"  {name}: {size}")
+
+    print("\nCoordinates:")
+    for name in ds.coords:
+        try:
+            values = ds[name].values
+
+            if values.size > 0:
+                print(
+                    f"  {name}: "
+                    f"shape={values.shape}, "
+                    f"first={values.flat[0]}, "
+                    f"last={values.flat[-1]}"
+                )
+            else:
+                print(f"  {name}: empty")
+
+        except Exception:
+            print(f"  {name}")
+
+    print("\nData variables:")
+
+    for name, variable in ds.data_vars.items():
+
+        print(
+            f"  {name}: "
+            f"dims={variable.dims}, "
+            f"shape={variable.shape}"
+        )
+
+        if "units" in variable.attrs:
+            print(
+                f"      units={variable.attrs['units']}"
+            )
+
+        if "long_name" in variable.attrs:
+            print(
+                f"      description={variable.attrs['long_name']}"
+            )
+
+    print("\n" + "=" * 70)
+
+
+# ============================================================
+# SELECT SUBSET
+# ============================================================
+
+def select_subset(
+    ds: xr.Dataset,
+    variable_name: str,
+    lat_name: str | None,
+    lon_name: str | None,
+    depth_name: str | None,
+    time_name: str | None,
+) -> xr.DataArray:
+
+    data = ds[variable_name]
+
+    print("\nSelecting data...")
+
+    # --------------------------------------------------------
+    # Longitude
+    # --------------------------------------------------------
+
+    if lon_name:
+
+        lon_values = ds[lon_name].values
+
+        min_available_lon = float(np.nanmin(lon_values))
+        max_available_lon = float(np.nanmax(lon_values))
+
+        min_lon = max(MIN_LON, min_available_lon)
+        max_lon = min(MAX_LON, max_available_lon)
+
+        print(
+            f"Longitude: {min_lon} -> {max_lon}"
+        )
+
+        # Handle ascending/descending coordinates
+        if lon_values[0] < lon_values[-1]:
+            data = data.sel(
+                {lon_name: slice(min_lon, max_lon)}
+            )
+        else:
+            data = data.sel(
+                {lon_name: slice(max_lon, min_lon)}
+            )
+
+    # --------------------------------------------------------
+    # Latitude
+    # --------------------------------------------------------
+
+    if lat_name:
+
+        lat_values = ds[lat_name].values
+
+        min_available_lat = float(np.nanmin(lat_values))
+        max_available_lat = float(np.nanmax(lat_values))
+
+        min_lat = max(MIN_LAT, min_available_lat)
+        max_lat = min(MAX_LAT, max_available_lat)
+
+        print(
+            f"Latitude: {min_lat} -> {max_lat}"
+        )
+
+        if lat_values[0] < lat_values[-1]:
+            data = data.sel(
+                {lat_name: slice(min_lat, max_lat)}
+            )
+        else:
+            data = data.sel(
+                {lat_name: slice(max_lat, min_lat)}
+            )
+
+    # --------------------------------------------------------
+    # Depth
+    # --------------------------------------------------------
+
+    if depth_name:
+
+        depth_values = ds[depth_name].values
+
+        min_available_depth = float(
+            np.nanmin(depth_values)
+        )
+
+        max_available_depth = float(
+            np.nanmax(depth_values)
+        )
+
+        min_depth = max(
+            MIN_DEPTH,
+            min_available_depth
+        )
+
+        max_depth = min(
+            MAX_DEPTH,
+            max_available_depth
+        )
+
+        print(
+            f"Depth: {min_depth} -> {max_depth} meters"
+        )
+
+        if depth_values[0] < depth_values[-1]:
+            data = data.sel(
+                {
+                    depth_name:
+                    slice(min_depth, max_depth)
+                }
+            )
+        else:
+            data = data.sel(
+                {
+                    depth_name:
+                    slice(max_depth, min_depth)
+                }
+            )
+
+    # --------------------------------------------------------
+    # TIME
+    # --------------------------------------------------------
+
+    if time_name:
+
+        time_values = ds[time_name].values
+
+        if len(time_values) > 0:
+
+            print(
+                f"Time points available: "
+                f"{len(time_values)}"
+            )
+
+            # For this parser we take the first time step.
+            # This keeps the exported file manageable.
+            data = data.isel(
+                {time_name: 0}
+            )
+
+            print(
+                f"Selected first time step: "
+                f"{time_values[0]}"
+            )
+
+    return data
+
+
+# ============================================================
+# REDUCE DATA SIZE
+# ============================================================
+
+def limit_points(data: xr.DataArray) -> xr.DataArray:
+
+    total_points = data.size
+
+    print(
+        f"\nSelected data points: {total_points:,}"
+    )
+
+    if total_points <= MAX_POINTS:
+        return data
+
+    print(
+        f"More than {MAX_POINTS:,} points found."
+    )
+
+    print("Downsampling data for export...")
+
+    factor = int(
+        np.ceil(
+            total_points / MAX_POINTS
+        )
+    )
+
+    print(
+        f"Downsampling factor: {factor}"
+    )
+
+    # Reduce each dimension using isel
+    indexers = {}
+
+    for dimension in data.dims:
+
+        size = data.sizes[dimension]
+
+        indexers[dimension] = slice(
+            0,
+            size,
+            factor
+        )
+
+    data = data.isel(indexers)
+
+    print(
+        f"Points after downsampling: "
+        f"{data.size:,}"
+    )
+
+    return data
+
+
+# ============================================================
+# CONVERT XARRAY DATA TO RECORDS
+# ============================================================
+
+def convert_to_records(
+    data: xr.DataArray,
+    lat_name: str | None,
+    lon_name: str | None,
+    depth_name: str | None,
+    time_name: str | None,
+) -> list[dict]:
+
+    print("\nConverting xarray data to records...")
+
+    # Convert to DataFrame.
+    # xarray handles the coordinate mapping for us.
+    df = data.to_dataframe(
+        name="value"
+    ).reset_index()
+
+    # Remove missing values
+    df = df.dropna(
+        subset=["value"]
+    )
+
+    records = []
+
+    for _, row in df.iterrows():
+
+        record = {}
+
+        # Latitude
+        if lat_name and lat_name in row:
+            record["latitude"] = float(
+                row[lat_name]
+            )
+
+        # Longitude
+        if lon_name and lon_name in row:
+            record["longitude"] = float(
+                row[lon_name]
+            )
+
+        # Depth
+        if depth_name and depth_name in row:
+            record["depth"] = float(
+                row[depth_name]
+            )
+
+        # Time
+        if time_name and time_name in row:
+
+            time_value = row[time_name]
+
+            record["time"] = str(
+                time_value
+            )
+
+        # Ocean value
+        record["value"] = float(
+            row["value"]
+        )
+
+        records.append(record)
+
+    return records
+
+
+# ============================================================
+# SAVE CSV
+# ============================================================
+
+def save_csv(records: list[dict], output: Path):
+
+    output.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    df = pd.DataFrame(records)
+
+    df.to_csv(
+        output,
+        index=False
+    )
+
+    print(
+        f"\nCSV saved to:\n{output.resolve()}"
+    )
+
+
+# ============================================================
+# SAVE JSON
+# ============================================================
+
+def save_json(
+    records: list[dict],
+    output: Path,
+    variable_name: str,
+    ds: xr.Dataset,
+):
+
+    output.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    metadata = {
+        "source_file": str(INPUT_FILE),
+        "variable": variable_name,
+        "units": ds[variable_name].attrs.get(
+            "units",
+            ""
         ),
-        "source_levels": source_levels,
-        "provenance": prov.__dict__,
+        "long_name": ds[variable_name].attrs.get(
+            "long_name",
+            ""
+        ),
+        "number_of_points": len(records),
+        "records": records,
     }
+
+    with open(
+        output,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            metadata,
+            file,
+            indent=2,
+            default=str
+        )
+
+    print(
+        f"JSON saved to:\n{output.resolve()}"
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print("\n")
+    print("=" * 70)
+    print("COPERNICUS / HYCOM NETCDF PARSER")
+    print("=" * 70)
+
+    # --------------------------------------------------------
+    # Open dataset
+    # --------------------------------------------------------
+
+    ds = open_netcdf(
+        INPUT_FILE
+    )
+
+    try:
+
+        # ----------------------------------------------------
+        # Print information
+        # ----------------------------------------------------
+
+        print_dataset_info(
+            ds
+        )
+
+        # ----------------------------------------------------
+        # Detect coordinates
+        # ----------------------------------------------------
+
+        lat_name = find_coordinate(
+            ds,
+            [
+                "latitude",
+                "lat",
+                "nav_lat",
+            ]
+        )
+
+        lon_name = find_coordinate(
+            ds,
+            [
+                "longitude",
+                "lon",
+                "nav_lon",
+            ]
+        )
+
+        depth_name = find_coordinate(
+            ds,
+            [
+                "depth",
+                "deptht",
+                "lev",
+                "level",
+            ]
+        )
+
+        time_name = find_coordinate(
+            ds,
+            [
+                "time",
+                "time_counter",
+                "datetime",
+            ]
+        )
+
+        print("\nDetected coordinates:")
+
+        print(
+            f"  Latitude : {lat_name}"
+        )
+
+        print(
+            f"  Longitude: {lon_name}"
+        )
+
+        print(
+            f"  Depth    : {depth_name}"
+        )
+
+        print(
+            f"  Time     : {time_name}"
+        )
+
+        # ----------------------------------------------------
+        # Find variable
+        # ----------------------------------------------------
+
+        variable_name = find_variable(
+            ds,
+            VARIABLE
+        )
+
+        print(
+            f"\nVariable selected: "
+            f"{variable_name}"
+        )
+
+        # ----------------------------------------------------
+        # Select subset
+        # ----------------------------------------------------
+
+        data = select_subset(
+            ds,
+            variable_name,
+            lat_name,
+            lon_name,
+            depth_name,
+            time_name,
+        )
+
+        # ----------------------------------------------------
+        # Limit data
+        # ----------------------------------------------------
+
+        data = limit_points(
+            data
+        )
+
+        # ----------------------------------------------------
+        # Convert to records
+        # ----------------------------------------------------
+
+        records = convert_to_records(
+            data,
+            lat_name,
+            lon_name,
+            depth_name,
+            time_name,
+        )
+
+        # ----------------------------------------------------
+        # Save
+        # ----------------------------------------------------
+
+        save_csv(
+            records,
+            CSV_OUTPUT
+        )
+
+        save_json(
+            records,
+            JSON_OUTPUT,
+            variable_name,
+            ds,
+        )
+
+        # ----------------------------------------------------
+        # Display sample
+        # ----------------------------------------------------
+
+        print("\n")
+        print("=" * 70)
+        print("SAMPLE EXTRACTED DATA")
+        print("=" * 70)
+
+        for record in records[:10]:
+            print(record)
+
+        print("\n")
+        print("=" * 70)
+        print("PARSING COMPLETED SUCCESSFULLY")
+        print("=" * 70)
+
+        print(
+            f"\nTotal records exported: "
+            f"{len(records):,}"
+        )
+
+    finally:
+
+        # Always close the NetCDF file
+        ds.close()
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
+    main()
