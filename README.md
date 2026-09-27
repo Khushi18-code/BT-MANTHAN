@@ -7,7 +7,7 @@
 **SIH Problem Statement 26067**
 Integrating numerical ocean model outputs with in-situ observations in a single interactive 3D environment.
 
-[**Live Demo**](https://sagar-drishti-3dsk.onrender.com) · [Documentation](./docs) · [Architecture](./docs/03-architecture.md)
+[**Live Demo**](sagar-drishti-production.up.railway.app) · [Documentation](./docs) · [Architecture](./docs/03-architecture.md)
 
 </div>
 
