@@ -53,7 +53,7 @@ model–observation comparison with full provenance and quality records attached
 Model and observation data never reach the browser as NetCDF. A Python backend performs
 spatial, temporal and vertical subsetting and returns only web-ready JSON.
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     A[HYCOM model output] --> D[Ingestion & Parsing]
     B[Copernicus Marine products] --> D
@@ -65,7 +65,7 @@ flowchart TD
     H --> I[3D Ocean Viewer]
     H --> J[Depth Profile Charts]
     H --> K[Comparison, Provenance & Quality Panels]
-\`\`\`
+```
 
 Full explanation: [docs/03-architecture.md](./docs/03-architecture.md)
 
@@ -165,7 +165,7 @@ MIT License.
 
 <div align="center">
 
-**Team Sagar-Drishti** · SIH 2026 · Problem Statement 26067
+**Team BT-MANTHAN** · SIH 2026 · Problem Statement 26067
 
 </div>
 
