@@ -1,1 +1,12 @@
-flask, xarray, netCDF4, numpy, pandas, requests, gunicorn.
+flask
+flask-cors
+gunicorn
+python-dotenv
+pandas
+requests
+xarray
+scipy
+netCDF4
+numpy
+urllib3
+copernicusmarine
