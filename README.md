@@ -91,7 +91,8 @@ Full explanation: [docs/03-architecture.md](./docs/03-architecture.md)
 | `backend/` | `parse_nc.py` | NetCDF parser and subsetting utilities |
 | `frontend/` | `index.html` | Landing page |
 | `frontend/` | `explorer.html` | 3D explorer, comparison & analysis interface |
-| `docs/` | — | Problem, solution, architecture, pipeline, scientific method, DQI, phases, flowcharts |
+| `docs/` | — | Problem, solution, architecture, pipeline, scientific method, DQI, phases, flowcharts, education-mode |
+
 
 
 ## Running Locally
