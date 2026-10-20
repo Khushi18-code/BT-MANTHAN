@@ -134,12 +134,17 @@ Three concepts stay deliberately separate, and the interface keeps them separate
 Read the full treatment: [docs/05-scientific-method.md](./docs/05-scientific-method.md) ·
 [docs/06-dqi-framework.md](./docs/06-dqi-framework.md)
 
-## Public Outreach
+## 🎓 Public Outreach & Education Mode
 
-The same platform doubles as science communication. Numerical ocean model output is normally
-inaccessible to non-specialists; rendered as an interactive 3D experience it becomes teachable.
-The interface supports this with a learning mode offering plain-language explanations of each layer,
-making it usable for school and college education, public awareness campaigns and e-learning.
+Sagar-Drishti doubles as a powerful tool for science communication, instantly translating complex oceanographic metrics into an intuitive pedagogical engine. The platform features a dedicated **Education Mode** to make raw atmospheric data accessible to non-specialists, schools, and colleges:
+
+* 🌊 **3D Cross-Sections:** Guided vertical slices through the water column displaying float ascents/descents in clear depth fields.
+* ≋ **Depth-Banded Flow Vectors:** Visual arrow paths breaking down ocean circulation metrics into clear zones (Surface, Thermocline, and Abyss).
+* 📖 **Curriculum Alignment:** Narrative modules explaining data provenance, variables (Temperature, Salinity, Chlorophyll), and measurement concepts in plain language.
+* 🚀 **Zero-Barrier Setup:** Instant activation directly within the UI, adapting workspace layouts to prevent technical tool overload.
+
+📖 **Full Treatment & Technical Framework:** [docs/08-education-mode.md](docs/08-education-mode.md)
+
 
 ## Future Scope
 
